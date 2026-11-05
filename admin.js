@@ -8,6 +8,27 @@ let items=JSON.parse(localStorage.getItem(KEY)||"null")||seed;
 const $=s=>document.querySelector(s);
 const save=()=>{localStorage.setItem(KEY,JSON.stringify(items));render()};
 function render(){const q=$("#adminSearch").value.toLowerCase();const filtered=items.filter(x=>x.title.toLowerCase().includes(q));$("#adminRows").innerHTML=filtered.map(x=>`<tr><td><span class="table-title"><img class="mini-poster" src="${safe(x.poster)}" onerror="this.style.visibility='hidden'"><span>${safe(x.title)}</span></span></td><td>${safe(x.type)}</td><td>${safe(x.genre)}</td><td>${x.year||"—"}</td><td>${x.featured?"★ نعم":"—"}</td><td><div class="row-actions"><button data-edit="${x.id}">تعديل</button><button class="delete" data-del="${x.id}">حذف</button></div></td></tr>`).join("");$("#emptyAdmin").hidden=filtered.length>0;$("#totalCount").textContent=items.length;$("#filmCount").textContent=items.filter(x=>x.type==="فيلم").length;$("#seriesCount").textContent=items.filter(x=>x.type==="مسلسل").length;$("#featuredCount").textContent=items.filter(x=>x.featured).length}
+function normalizeImport(data){
+ const arr=Array.isArray(data)?data:(data.items||data.movies||data.series||data.results);
+ if(!Array.isArray(arr)||!arr.length)throw Error("لم نعثر على قائمة عناوين صالحة داخل JSON");
+ return arr.map((x,i)=>{
+  if(!x||typeof x!=="object")throw Error("يوجد عنصر غير صالح في القائمة");
+  const title=String(x.title||x.name||x.en_title||"").trim();
+  if(!title)throw Error("يوجد عنصر بدون اسم عنوان");
+  const rawType=String(x.type||x.kind||"فيلم").toLowerCase();
+  const type=(rawType.includes("series")||rawType.includes("مسلسل")||rawType==="2")?"مسلسل":(rawType.includes("anime")||rawType.includes("أنمي")?"أنمي":"فيلم");
+  const poster=x.poster||x.image||x.poster_url||x.imgObjUrl||"";
+  const video=x.video||x.url||x.stream||x.videoUrl||"";
+  return {id:String(x.id||x.nb||("import-"+Date.now()+"-"+i)),title,type,genre:Array.isArray(x.genres)?(x.genres[0]||"دراما"):(x.genre||"دراما"),year:x.year||x.release_year||"",rating:x.rating||x.stars||"",poster,video,desc:x.desc||x.overview||x.description||x.en_content||"",featured:!!x.featured,seasons:x.seasons||x.episodes||[]};
+ });
+}
+function mergeImport(incoming){
+ const map=new Map(items.map(x=>[String(x.id),x]));
+ incoming.forEach(x=>{const sameTitle=items.find(old=>old.title.trim().toLowerCase()===x.title.trim().toLowerCase()&&old.type===x.type);const key=sameTitle?String(sameTitle.id):String(x.id);map.set(key,{...(sameTitle||{}),...x,id:sameTitle?sameTitle.id:x.id});});
+ items=Array.from(map.values());save();
+}
+function openPaste(){ $("#jsonText").value="";$("#jsonStatus").textContent="";$("#pasteModal").classList.add("show"); }
+function closePaste(){ $("#pasteModal").classList.remove("show"); }
 function safe(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function formOpen(item){$("#contentForm").reset();$("#itemId").value=item?.id||"";$("#formTitle").textContent=item?"تعديل العنوان":"إضافة عنوان";if(item){$("#fTitle").value=item.title||"";$("#fType").value=item.type||"فيلم";$("#fGenre").value=item.genre||"أكشن";$("#fYear").value=item.year||2026;$("#fRating").value=item.rating||8;$("#fPoster").value=item.poster||"";$("#fVideo").value=item.video||"";$("#fDesc").value=item.desc||"";$("#fFeatured").checked=!!item.featured}$("#editModal").classList.add("show")}
 function formClose(){$("#editModal").classList.remove("show")}
@@ -16,7 +37,7 @@ $("#contentForm").onsubmit=e=>{e.preventDefault();const id=$("#itemId").value;co
 $("#adminRows").onclick=e=>{const edit=e.target.dataset.edit,del=e.target.dataset.del;if(edit)formOpen(items.find(x=>x.id===Number(edit)));if(del&&confirm("متأكد تريد حذف هذا العنوان؟")){items=items.filter(x=>x.id!==Number(del));save()}};
 $("#adminSearch").oninput=render;
 $("#exportBtn").onclick=()=>{const blob=new Blob([JSON.stringify({version:1,items},null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="ciflix-catalog.json";a.click();URL.revokeObjectURL(a.href)};
-$("#importBtn").onclick=()=>$("#jsonFile").click();
-$("#jsonFile").onchange=async e=>{try{const data=JSON.parse(await e.target.files[0].text());const arr=Array.isArray(data)?data:(data.items||data.movies||data.results);if(!Array.isArray(arr))throw Error("لم نعثر على قائمة عناوين داخل JSON");if(!confirm(`سيتم استبدال المكتبة الحالية بـ ${arr.length} عنوان. متابعة؟`))return;items=arr.map((x,i)=>({id:Number(x.id)||Date.now()+i,title:x.title||x.name||"بدون عنوان",type:x.type||"فيلم",genre:Array.isArray(x.genres)?x.genres[0]:(x.genre||"دراما"),year:x.year||x.release_year||"",rating:x.rating||"",poster:x.poster||x.image||x.poster_url||"",video:x.video||x.url||x.stream||"",desc:x.desc||x.overview||x.description||"",featured:!!x.featured}));save();$("#feedStatus").textContent="تم استيراد الملف بنجاح."}catch(err){alert("تعذر الاستيراد: "+err.message)}e.target.value=""};
+$("#importBtn").onclick=()=>$("#jsonFile").click();\n$("#pasteBtn").onclick=openPaste;$("#closePaste").onclick=$("#cancelPaste").onclick=closePaste;$("#pasteModal").onclick=e=>{if(e.target.id==="pasteModal")closePaste()};\n$("#applyJson").onclick=()=>{try{const incoming=normalizeImport(JSON.parse($("#jsonText").value));if(!confirm(`تم التعرف على ${incoming.length} عنوان. دمجها مع المكتبة الحالية؟`))return;mergeImport(incoming);$("#jsonStatus").textContent=`تم استيراد ودمج ${incoming.length} عنوان بنجاح.`;setTimeout(closePaste,900)}catch(err){$("#jsonStatus").textContent="تعذر الاستيراد: "+err.message}};
+$("#jsonFile").onchange=async e=>{try{const data=JSON.parse(await e.target.files[0].text());const incoming=normalizeImport(data);if(!confirm(`تم التعرف على ${incoming.length} عنوان. دمجها مع المكتبة الحالية دون حذف الموجود؟`))return;mergeImport(incoming);$("#feedStatus").textContent=`تم دمج ${incoming.length} عنوان من الملف بنجاح.`}catch(err){alert("تعذر الاستيراد: "+err.message)}e.target.value=""};
 $("#loadFeed").onclick=async()=>{const url=$("#feedUrl").value.trim();if(!url)return alert("أدخل رابط JSON أولاً");$("#feedStatus").textContent="جارٍ جلب البيانات...";try{const res=await fetch(url);if(!res.ok)throw Error("HTTP "+res.status);const data=await res.json();const arr=Array.isArray(data)?data:(data.items||data.movies||data.results);if(!Array.isArray(arr))throw Error("بنية JSON غير معروفة");if(!confirm(`تم العثور على ${arr.length} عنوان. استبدال المكتبة الحالية؟`))return;items=arr.map((x,i)=>({id:Number(x.id)||Date.now()+i,title:x.title||x.name||"بدون عنوان",type:x.type||"فيلم",genre:Array.isArray(x.genres)?x.genres[0]:(x.genre||"دراما"),year:x.year||x.release_year||"",rating:x.rating||"",poster:x.poster||x.image||x.poster_url||"",video:x.video||x.url||x.stream||"",desc:x.desc||x.overview||x.description||"",featured:!!x.featured}));save();$("#feedStatus").textContent=`تم استيراد ${items.length} عنوان.`}catch(err){$("#feedStatus").textContent="فشل الجلب: "+err.message+" — قد يكون السبب CORS أو رابطاً غير صالح."}};
 render();
